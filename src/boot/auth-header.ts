@@ -94,6 +94,7 @@ const XS = XMLHttpRequest.prototype.send;
 };
 
 (XMLHttpRequest.prototype as any).send = function (body?: Document | BodyInit | null) {
+  // Attach Authorization to outgoing XHRs
   if ((this as any).__ccf_is_api) {
     try {
       const t = getToken();
@@ -102,6 +103,34 @@ const XS = XMLHttpRequest.prototype.send;
       /* noop */
     }
   }
+
+  // Persist JWT when login is performed via XHR
+  this.addEventListener('load', function () {
+    try {
+      // responseURL is absolute; fall back is not needed for modern browsers
+      const url = new URL((this as XMLHttpRequest).responseURL);
+      const path = url.pathname;
+
+      // Capture token on successful login
+      if (/\/api\/auth\/login$/.test(path) && this.status >= 200 && this.status < 300) {
+        const bodyText = (this as XMLHttpRequest).responseText || '';
+        const json = JSON.parse(bodyText);
+        const token = json && json.data && json.data.auth_token;
+        if (typeof token === 'string' && token.length > 0) setToken(token);
+      }
+
+      // Optional hygiene: clear token on logout or unauthorized
+      if (/\/api\/auth\/logout$/.test(path) && this.status >= 200 && this.status < 300) {
+        clearToken();
+      }
+      if (this.status === 401) {
+        clearToken();
+      }
+    } catch {
+      /* noop */
+    }
+  });
+
   return XS.apply(this, [body]);
 };
 

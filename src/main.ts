@@ -1,4 +1,5 @@
 import './assets/main.css';
+import './boot/auth-header'; // <-- attach Authorization on all /api requests (and persist login token)
 
 import { createApp } from 'vue';
 import { createPinia } from 'pinia';

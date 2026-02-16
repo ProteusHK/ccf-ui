@@ -39,23 +39,36 @@ function isApi(url: string): boolean {
 // Patch fetch
 const _fetch = window.fetch.bind(window);
 window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-  const url = typeof input === 'string' ? input : (input as Request).url;
+  const url =
+    typeof input === 'string'
+      ? input
+      : input instanceof URL
+        ? input.toString()
+        : (input as Request).url;
+
   let cfg = init;
 
   if (isApi(url)) {
-    cfg = { ...init, headers: new Headers((init && init.headers) || {}) };
-    const h = cfg.headers as Headers;
-    if (!h.has('Authorization')) {
-      const t = getToken();
-      if (t) h.set('Authorization', `Bearer ${t}`);
+    // Merge headers: start with Request.headers (if input is a Request),
+    // then overlay init.headers (caller intent wins), then add Authorization if absent.
+    const merged = new Headers(
+      input instanceof Request ? (input as Request).headers : undefined
+    );
+    if (init?.headers) {
+      new Headers(init.headers).forEach((v, k) => merged.set(k, v));
     }
+    if (!merged.has('Authorization')) {
+      const t = getToken();
+      if (t) merged.set('Authorization', `Bearer ${t}`);
+    }
+    cfg = { ...init, headers: merged };
   }
 
   const res = await _fetch(input, cfg);
 
-  // Capture token on successful login
   try {
-    if (isApi(url) && /\/api\/auth\/login$/.test(new URL(url, location.origin).pathname) && res.ok) {
+    const p = new URL(url, location.origin).pathname;
+    if (isApi(url) && /\/api\/auth\/login$/.test(p) && res.ok) {
       const clone = res.clone();
       const body = await clone.json().catch(() => null);
       const token = body && body.data && body.data.auth_token;

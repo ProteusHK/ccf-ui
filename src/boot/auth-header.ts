@@ -27,53 +27,71 @@ function clearToken() {
   }
 }
 
+/**
+ * Consider any URL whose path starts with "/api/" as an API call,
+ * regardless of origin (supports external API_URL).
+ */
 function isApi(url: string): boolean {
   try {
     const u = new URL(url, window.location.origin);
-    return u.origin === window.location.origin && u.pathname.startsWith('/api/');
+    return u.pathname.startsWith('/api/');
   } catch {
     return false;
   }
 }
 
-// Patch fetch
+/* -------------------- fetch patch -------------------- */
 const _fetch = window.fetch.bind(window);
+
 window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+  // Normalize URL for detection
   const url =
     typeof input === 'string'
       ? input
       : input instanceof URL
-        ? input.toString()
-        : (input as Request).url;
+      ? input.toString()
+      : (input as Request).url;
 
-  let cfg = init;
-
-  if (isApi(url)) {
-    // Merge headers: start with Request.headers (if input is a Request),
-    // then overlay init.headers (caller intent wins), then add Authorization if absent.
-    const merged = new Headers(
-      input instanceof Request ? (input as Request).headers : undefined
-    );
-    if (init?.headers) {
-      new Headers(init.headers).forEach((v, k) => {
-        merged.set(k, v);
-      });
-    }
-    if (!merged.has('Authorization')) {
-      const t = getToken();
-      if (t) merged.set('Authorization', `Bearer ${t}`);
-    }
-    cfg = { ...init, headers: merged };
+  // If not an API call, pass through
+  if (!isApi(url)) {
+    return _fetch(input as any, init as any);
   }
 
-  const res = await _fetch(input, cfg);
+  // Merge headers: start with headers on the Request (if present),
+  // then overlay init.headers (caller intent wins), then add Authorization if absent.
+  const merged = new Headers(
+    input instanceof Request ? (input as Request).headers : undefined
+  );
+  if (init?.headers) {
+    new Headers(init.headers).forEach((v, k) => {
+      merged.set(k, v);
+    });
+  }
+  if (!merged.has('Authorization')) {
+    const t = getToken();
+    if (t) merged.set('Authorization', `Bearer ${t}`);
+  }
 
+  // Rebuild when input is a Request so our merged headers are guaranteed to be applied.
+  let res: Response;
+  if (input instanceof Request) {
+    const req = new Request(input, { ...init, headers: merged });
+    res = await _fetch(req);
+  } else {
+    res = await _fetch(input as any, { ...init, headers: merged });
+  }
+
+  // Capture token on successful login
   try {
     const p = new URL(url, location.origin).pathname;
-    if (isApi(url) && /\/api\/auth\/login$/.test(p) && res.ok) {
-      const clone = res.clone();
-      const body = await clone.json().catch(() => null);
-      const token = body && body.data && body.data.auth_token;
+    if (/\/api\/auth\/login$/.test(p) && res.ok) {
+      let body: any = null;
+      try {
+        body = await res.clone().json();
+      } catch {
+        body = null;
+      }
+      const token = body?.data?.auth_token;
       if (typeof token === 'string' && token.length > 0) setToken(token);
     }
   } catch {
@@ -83,7 +101,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   return res;
 };
 
-// Patch XHR (axios defaults to XHR in browsers)
+/* -------------------- XHR (axios) patch -------------------- */
 const XO = XMLHttpRequest.prototype.open;
 const XS = XMLHttpRequest.prototype.send;
 
@@ -116,35 +134,47 @@ const XS = XMLHttpRequest.prototype.send;
     }
   }
 
-  // Persist JWT when login is performed via XHR
-  this.addEventListener('load', function (this: XMLHttpRequest) {
-    try {
-      // Only process same-origin API requests
-      if (!(this as any).__ccf_is_api) return;
+  // Persist JWT when login is performed via XHR (axios)
+  this.addEventListener(
+    'load',
+    function (this: XMLHttpRequest) {
+      try {
+        if (!(this as any).__ccf_is_api) return;
 
-      // responseURL is absolute; fall back is not needed for modern browsers
-      const url = new URL(this.responseURL);
-      const path = url.pathname;
+        const url = new URL(this.responseURL);
+        const path = url.pathname;
 
-      // Capture token on successful login
-      if (/\/api\/auth\/login$/.test(path) && this.status >= 200 && this.status < 300) {
-        const bodyText = this.responseText || '';
-        const json = JSON.parse(bodyText);
-        const token = json && json.data && json.data.auth_token;
-        if (typeof token === 'string' && token.length > 0) setToken(token);
-      }
+        // Capture token on successful login
+        if (/\/api\/auth\/login$/.test(path) && this.status >= 200 && this.status < 300) {
+          let json: any = null;
+          try {
+            // axios often sets responseType='json'; prefer parsed object if present
+            if (this.response && typeof this.response === 'object') {
+              json = this.response;
+            } else {
+              const txt = this.responseText || '';
+              json = txt ? JSON.parse(txt) : null;
+            }
+          } catch {
+            json = null;
+          }
+          const token = json?.data?.auth_token;
+          if (typeof token === 'string' && token.length > 0) setToken(token);
+        }
 
-      // Optional hygiene: clear token on logout or unauthorized
-      if (/\/api\/auth\/logout$/.test(path) && this.status >= 200 && this.status < 300) {
-        clearToken();
+        // Optional hygiene: clear token on logout or unauthorized
+        if (/\/api\/auth\/logout$/.test(path) && this.status >= 200 && this.status < 300) {
+          clearToken();
+        }
+        if (this.status === 401) {
+          clearToken();
+        }
+      } catch {
+        /* noop */
       }
-      if (this.status === 401) {
-        clearToken();
-      }
-    } catch {
-      /* noop */
-    }
-  }, { once: true });
+    },
+    { once: true }
+  );
 
   return XS.call(this, body);
 };

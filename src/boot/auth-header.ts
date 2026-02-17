@@ -55,7 +55,9 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       input instanceof Request ? (input as Request).headers : undefined
     );
     if (init?.headers) {
-      new Headers(init.headers).forEach((v, k) => merged.set(k, v));
+      new Headers(init.headers).forEach((v, k) => {
+        merged.set(k, v);
+      });
     }
     if (!merged.has('Authorization')) {
       const t = getToken();

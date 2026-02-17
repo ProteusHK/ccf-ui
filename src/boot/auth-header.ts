@@ -30,7 +30,7 @@ function clearToken() {
 function isApi(url: string): boolean {
   try {
     const u = new URL(url, window.location.origin);
-    return u.pathname.startsWith('/api/');
+    return u.origin === window.location.origin && u.pathname.startsWith('/api/');
   } catch {
     return false;
   }
@@ -119,6 +119,9 @@ const XS = XMLHttpRequest.prototype.send;
   // Persist JWT when login is performed via XHR
   this.addEventListener('load', function (this: XMLHttpRequest) {
     try {
+      // Only process same-origin API requests
+      if (!(this as any).__ccf_is_api) return;
+
       // responseURL is absolute; fall back is not needed for modern browsers
       const url = new URL(this.responseURL);
       const path = url.pathname;
@@ -141,7 +144,7 @@ const XS = XMLHttpRequest.prototype.send;
     } catch {
       /* noop */
     }
-  });
+  }, { once: true });
 
   return XS.call(this, body);
 };

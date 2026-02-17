@@ -30,7 +30,7 @@ function clearToken() {
 function isApi(url: string): boolean {
   try {
     const u = new URL(url, window.location.origin);
-    return u.pathname.startsWith('/api/');
+    return u.origin === window.location.origin && u.pathname.startsWith('/api/');
   } catch {
     return false;
   }
@@ -90,12 +90,22 @@ const XS = XMLHttpRequest.prototype.send;
 (XMLHttpRequest.prototype as any)._ccf_open = XO;
 (XMLHttpRequest.prototype as any)._ccf_send = XS;
 
-(XMLHttpRequest.prototype as any).open = function (method: string, url: string, ...rest: any[]) {
+(XMLHttpRequest.prototype as any).open = function (
+  this: XMLHttpRequest,
+  method: string,
+  url: string,
+  async: boolean = true,
+  username?: string | null,
+  password?: string | null
+) {
   (this as any).__ccf_is_api = isApi(url);
-  return XO.apply(this, [method, url, ...rest]);
+  return XO.call(this, method, url, async, username, password);
 };
 
-(XMLHttpRequest.prototype as any).send = function (body?: Document | BodyInit | null) {
+(XMLHttpRequest.prototype as any).send = function (
+  this: XMLHttpRequest,
+  body?: Document | XMLHttpRequestBodyInit | null
+) {
   // Attach Authorization to outgoing XHRs
   if ((this as any).__ccf_is_api) {
     try {
@@ -107,15 +117,18 @@ const XS = XMLHttpRequest.prototype.send;
   }
 
   // Persist JWT when login is performed via XHR
-  this.addEventListener('load', function () {
+  this.addEventListener('load', function (this: XMLHttpRequest) {
     try {
+      // Only process same-origin API requests
+      if (!(this as any).__ccf_is_api) return;
+
       // responseURL is absolute; fall back is not needed for modern browsers
-      const url = new URL((this as XMLHttpRequest).responseURL);
+      const url = new URL(this.responseURL);
       const path = url.pathname;
 
       // Capture token on successful login
       if (/\/api\/auth\/login$/.test(path) && this.status >= 200 && this.status < 300) {
-        const bodyText = (this as XMLHttpRequest).responseText || '';
+        const bodyText = this.responseText || '';
         const json = JSON.parse(bodyText);
         const token = json && json.data && json.data.auth_token;
         if (typeof token === 'string' && token.length > 0) setToken(token);
@@ -131,9 +144,9 @@ const XS = XMLHttpRequest.prototype.send;
     } catch {
       /* noop */
     }
-  });
+  }, { once: true });
 
-  return XS.apply(this, [body]);
+  return XS.call(this, body);
 };
 
 // Optional helper exposed for debugging

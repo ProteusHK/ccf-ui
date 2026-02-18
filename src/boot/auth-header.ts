@@ -1,4 +1,19 @@
-/* Boot patch: persist JWT from /api/auth/login and attach Authorization on all /api/* calls.
+/* Boot patch: JWT bearer token authentication for deployments which cannot use cookie authentication e.g. Railway.
+   
+   AUTHENTICATION STRATEGY: Bearer token (localStorage + Authorization header)
+   - Captures JWT from /api/auth/login response body (data.auth_token)
+   - Stores in localStorage (ccf_auth_token)
+   - Attaches Authorization: Bearer <token> to all /api/* requests
+   
+   WHY THIS IS NEEDED:
+   - CCF API in production mode sets HttpOnly cookies (works for same-origin deployments)
+   - Cross-origin architectures prevent cookie-based auth from working
+   - This module implements bearer token strategy as a client-side fallback
+   
+   COMPATIBILITY:
+   - Works alongside cookie-based auth (Authorization header takes precedence)
+   - Degrades gracefully if API switches to cookie mode (no JWT in response body)
+   
    Works for both native fetch and axios (XHR) without touching the build pipeline. */
 
 const TOKEN_KEY = 'ccf_auth_token';

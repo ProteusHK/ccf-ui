@@ -178,10 +178,3 @@ const XS = XMLHttpRequest.prototype.send;
 
   return XS.call(this, body);
 };
-
-// Optional helper exposed for debugging
-(window as any).__ccfAuth = {
-  getToken,
-  setToken,
-  clearToken,
-};
